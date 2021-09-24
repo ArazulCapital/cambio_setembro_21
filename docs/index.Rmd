@@ -1,0 +1,1488 @@
+---
+exclude: true
+title: "Acompanhamento Econômico"
+subtitle: "Câmbio"
+author: "Arazul Capital"
+institute: ""
+date: "Setembro de 2021"
+output:
+  xaringan::moon_reader:
+    css: xaringan-themer.css
+    nature:
+      highlightStyle: github
+      highlightLines: true
+      countIncrementalSlides: true
+---
+background-image: url("capa_definitiva.png")
+background-size: contain
+
+
+---
+layout:true
+background-image: url("Imagem1.png")
+background-size: 600px
+background-position: 90% 4%
+
+---
+background-image: url("parte1.png")
+background-position: center
+background-size: contain
+
+
+
+```{r, include=FALSE, warning=FALSE}
+
+options(htmltools.dir.version = FALSE)
+knitr::opts_chunk$set(
+  fig.width=9, fig.height=3.5, fig.retina=3,
+  out.width = "100%",
+  cache = FALSE,
+  echo = TRUE,
+  message = FALSE, 
+  warning = FALSE,
+  fig.show = TRUE,
+  hiline = TRUE
+)
+library(xaringanthemer)
+xaringanthemer::style_mono_light(base_color = "#23395b")
+
+
+```
+
+
+---
+
+```{r, include=FALSE, warning=FALSE}
+
+library(ipeadatar)
+library(tidyverse)
+library(Cairo)
+library(gridExtra)
+library(xaringanthemer)
+library(rbcb)
+library(sidrar)
+library(quantmod)
+library(lubridate)
+library(ComexstatR)
+library(kableExtra)
+library(readxl)
+
+
+######### transações correntes acumulados em 12 meses ######
+tc_12 = get_series(23079, start_date='2000-01-01')
+
+
+####### Câmbio vs PPP ######
+start <- as.Date("1999-01-01")
+end <- Sys.Date()
+
+
+##### Câmbio PPP #####
+cambio <- ipeadatar::ipeadata("BM12_ERC12")
+cambio <- cambio %>% dplyr::filter(date >= "1999-01-01")
+cambio<-cambio[2:3]
+colnames(cambio)<-c("","cambio")
+
+
+##### CPI #####
+getSymbols('CPIAUCNS',src='FRED')
+CPI <- CPIAUCNS["1999-01-01/"]
+
+
+##### IPCA #####
+ipca_indice = '/t/1737/n1/all/v/2266/p/all/d/v2266%2013' %>% get_sidra(api=.) %>% mutate(date = ymd(paste0(`Mês (Código)`, '01'))) %>%
+  select(date, Valor) 
+ipca_indice<-ipca_indice %>% dplyr::filter(date >= "1999-01-01")
+ipca_indice<-xts(ipca_indice[,-1], order.by=ipca_indice[,1])
+
+
+###############
+dados<-as.xts(merge(CPI,ipca_indice))
+colnames(dados)<-c("CPI", "IPCA")
+
+
+###### Variacao sobre o ano base ######
+Variaco_IPCA=dados$IPCA/1468.41
+Variaco_CPI=dados$CPI/164.3
+dados<-as.xts(merge(dados, Variaco_CPI, Variaco_IPCA))
+colnames(dados)<-c("CPI","IPCA","variacao_CPI","variacao_IPCA")
+
+
+###### Câmbio PPP ###
+Cambio_PPP<-1.5011*(dados$variacao_IPCA/dados$variacao_CPI)
+colnames(Cambio_PPP)<-c("Cambio")
+
+################################################################################
+######## Taxa de câmbio - R$ / US$ ---------------------------------------------
+################################################################################
+
+getSymbols("USDBRL=X", scr = "yahoo", from = "2020-01-01", to = "2021-08-31")
+
+txa_cambio <- `USDBRL=X`
+rm(`USDBRL=X`)
+
+txa_cambio <- data.frame(date=index(txa_cambio), coredata(txa_cambio))
+
+txa_cambio <- txa_cambio %>% select(date, USDBRL.X.Close) %>% rename(valor = "USDBRL.X.Close")
+
+
+
+################ Câmbio contratado - comercial  ################
+Cambio_contratado_comercial <- ipeadatar::ipeadata("BM12_SBCCC12")
+
+Cambio_contratado_comercial <- Cambio_contratado_comercial %>% dplyr::filter(date >= "2020-01-01")
+
+Cambio_contratado_comercial <- Cambio_contratado_comercial %>% mutate(Color = ifelse(value < 0, "negativo","green"))
+
+
+Cambio_contratado_comercial <- Cambio_contratado_comercial %>% mutate(value = value/1000)
+
+################ Câmbio contratado - financeiro  ################
+Cambio_contratado_financeiro <- ipeadatar::ipeadata("BM12_SFCC12")
+
+Cambio_contratado_financeiro <- Cambio_contratado_financeiro %>% dplyr::filter(date >= "2020-01-01")
+
+
+Cambio_contratado_financeiro <- Cambio_contratado_financeiro %>% mutate(Color = ifelse(value < 0, "negativo","green"))
+
+Cambio_contratado_financeiro <- Cambio_contratado_financeiro %>% mutate(value = value/1000)
+
+# Exportação importação total e por países
+
+#################### Exportação -------------------------------------
+
+#### Geral 
+export_geral <- ComexstatR::pesquisar_comex_stat(ano_inicial = 2020,
+                                           ano_final = 2021,
+                                           mes_inicial = 1,
+                                           mes_final = 12,
+                                           tipo_op = "exp",
+                                           detalha_mes = TRUE,
+                                           valor_FOB = TRUE,
+                                           valor_kg = FALSE)
+
+# criando data
+export_geral$date <- paste0(export_geral$coAno,"-",export_geral$coMes,"-","01")
+
+export_geral$date <- ymd(export_geral$date)
+
+# transformando coluna em númerica
+export_geral$vlFob <- as.numeric(export_geral$vlFob)
+
+# agrupando e renomeando coluna
+export_geral <- export_geral %>%
+                dplyr::select(date, vlFob) %>%
+                dplyr::rename(exptotal = "vlFob")
+
+
+#### País e Bloco
+export <- ComexstatR::pesquisar_comex_stat(ano_inicial = 2020,
+                                 ano_final = 2021,
+                                 mes_inicial = 1,
+                                 mes_final = 12,
+                                 tipo_op = "exp",
+                                 detalhamentos = c("pais","blocos"),
+                                 detalha_mes = TRUE,
+                                 valor_FOB = TRUE,
+                                 valor_kg = FALSE)
+
+# vetor de países
+vetor_paises <- c("China","Estados Unidos","Argentina")
+
+# filtrando países e blocos selecionados
+export <- export %>% dplyr::filter(noPaispt %in% vetor_paises | noBlocopt == "Europa")
+
+# criando data
+export$date <- paste0(export$coAno,"-",export$coMes,"-","01")
+
+export$date <- ymd(export$date)
+
+# transformando coluna em númerica
+export$vlFob <- as.numeric(export$vlFob)
+
+# filtrando países e agrupando
+export_pais <- export %>%
+        dplyr::filter(noPaispt %in% vetor_paises) %>%
+        dplyr::group_by(date, noPaispt) %>%
+        dplyr::summarise(export_value = sum(vlFob)) %>%
+        tidyr::spread(noPaispt, export_value) %>% 
+        dplyr::rename(expchn = "China",
+                      exparg = "Argentina",
+                      expeua = "Estados Unidos")
+
+# filtrando bloco e agrupando
+export_bloco <- export %>%
+  dplyr::filter(noBlocopt == "Europa") %>%
+  dplyr::group_by(date, noBlocopt) %>%
+  dplyr::summarise(export_value = sum(vlFob)) %>%
+  tidyr::spread(noBlocopt, export_value) %>% 
+  dplyr::rename(expoeuro = "Europa")
+
+################ Importação ---------------------------------------------
+
+#### Geral 
+import_geral <- ComexstatR::pesquisar_comex_stat(ano_inicial = 2020,
+                                                 ano_final = 2021,
+                                                 mes_inicial = 1,
+                                                 mes_final = 12,
+                                                 tipo_op = "imp",
+                                                 detalha_mes = TRUE,
+                                                 valor_FOB = TRUE,
+                                                 valor_kg = FALSE)
+
+# criando data
+import_geral$date <- paste0(import_geral$coAno,"-",import_geral$coMes,"-","01")
+
+import_geral$date <- ymd(import_geral$date)
+
+# transformando coluna em númerica
+import_geral$vlFob <- as.numeric(import_geral$vlFob)
+
+# agrupando e renomeando coluna
+import_geral <- import_geral %>%
+  dplyr::select(date, vlFob) %>%
+  dplyr::rename(imptotal = "vlFob")
+
+
+# Por algum motivo inserir também o bloco retorna erro, por isso, importação é separada em dois datasets
+
+#### Países
+import_pais <- ComexstatR::pesquisar_comex_stat(ano_inicial = 2020,
+                                           ano_final = 2021,
+                                           mes_inicial = 1,
+                                           mes_final = 12,
+                                           tipo_op = "imp",
+                                           detalhamentos = "pais",
+                                           detalha_mes = TRUE,
+                                           valor_FOB = TRUE,
+                                           valor_kg = FALSE)
+
+# vetor de países
+vetor_paises <- c("China","Estados Unidos","Argentina")
+
+# filtrando países e blocos selecionados
+import_pais <- import_pais %>% dplyr::filter(noPaispt %in% vetor_paises)
+
+# criando data
+import_pais$date <- paste0(import_pais$coAno,"-",import_pais$coMes,"-","01")
+
+import_pais$date <- ymd(import_pais$date)
+
+# transformando coluna em númerica
+import_pais$vlFob <- as.numeric(import_pais$vlFob)
+
+# filtrando países e agrupando
+import_pais <- import_pais %>%
+  dplyr::filter(noPaispt %in% vetor_paises) %>%
+  dplyr::group_by(date, noPaispt) %>%
+  dplyr::summarise(export_value = sum(vlFob)) %>%
+  tidyr::spread(noPaispt, export_value) %>% 
+  dplyr::rename(impchn = "China",
+                imparg = "Argentina",
+                impeua = "Estados Unidos")
+
+#### Bloco
+import_bloco <- ComexstatR::pesquisar_comex_stat(ano_inicial = 2020,
+                                           ano_final = 2021,
+                                           mes_inicial = 1,
+                                           mes_final = 12,
+                                           tipo_op = "imp",
+                                           detalhamentos = "blocos",
+                                           detalha_mes = TRUE,
+                                           valor_FOB = TRUE,
+                                           valor_kg = FALSE)
+
+
+# filtrando países e blocos selecionados
+import_bloco <- import_bloco %>% dplyr::filter(noBlocopt == "Europa")
+
+# criando data
+import_bloco$date <- paste0(import_bloco$coAno,"-",import_bloco$coMes,"-","01")
+
+import_bloco$date <- ymd(import_bloco$date)
+
+# transformando coluna em númerica
+import_bloco$vlFob <- as.numeric(import_bloco$vlFob)
+
+# filtrando bloco e agrupando
+import_bloco <- import_bloco %>%
+  dplyr::group_by(date, noBlocopt) %>%
+  dplyr::summarise(export_value = sum(vlFob)) %>%
+  tidyr::spread(noBlocopt, export_value) %>% 
+  dplyr::rename(impeuro = "Europa")
+
+
+#################### Juntando todos os datasets -----------------
+
+comex <- list(export_geral, import_geral, export_bloco, export_pais, import_bloco, import_pais) %>%
+          purrr::reduce(inner_join, by = "date") %>% 
+          dplyr::rename(periodo = "date")
+
+
+# Ajustar para bilhões 
+comex[,2:11] <- sapply(comex[,2:11], function(x) x/(1000000000))
+
+#### Exportação geral ------------------
+exp_geral_table <- comex %>%
+  dplyr::select(exptotal, periodo) %>%
+  arrange(periodo) %>% 
+  mutate(var_mes_exp = (exptotal - dplyr::lag(exptotal, 1))/dplyr::lag(exptotal, 1)) %>% 
+  mutate(var_12m_exp = (exptotal - dplyr::lag(exptotal, 12))/dplyr::lag(exptotal, 12)) %>% 
+  filter(periodo == "2021-07-01") %>% 
+  select(var_mes_exp, var_12m_exp) %>% 
+  mutate(var_mes_exp = paste0(format(round(var_mes_exp*100 ,2),
+                                     big.mark = ".",
+                                     decimal.mark = ","), "%")) %>% 
+  mutate(var_12m_exp = paste0(format(round(var_12m_exp*100 ,2),
+                                     big.mark = ".",
+                                     decimal.mark = ","), "%"))
+
+
+#### Importação geral ------------------
+imp_geral_table <- comex %>%
+  dplyr::select(imptotal, periodo) %>%
+  arrange(periodo) %>% 
+  mutate(var_mes_exp = (imptotal - dplyr::lag(imptotal, 1))/dplyr::lag(imptotal, 1)) %>% 
+  mutate(var_12m_exp = (imptotal - dplyr::lag(imptotal, 12))/dplyr::lag(imptotal, 12)) %>% 
+  filter(periodo == "2021-07-01") %>% 
+  select(var_mes_exp, var_12m_exp) %>% 
+  mutate(var_mes_exp = paste0(format(round(var_mes_exp*100 ,2),
+                                     big.mark = ".",
+                                     decimal.mark = ","), "%")) %>% 
+  mutate(var_12m_exp = paste0(format(round(var_12m_exp*100 ,2),
+                                     big.mark = ".",
+                                     decimal.mark = ","), "%"))
+
+
+#### Importação EUA ------------------
+imp_geral_table_eua <- comex %>%
+  dplyr::select(impeua, periodo) %>%
+  arrange(periodo) %>% 
+  mutate(var_mes_exp = (impeua - dplyr::lag(impeua, 1))/dplyr::lag(impeua, 1)) %>% 
+  mutate(var_12m_exp = (impeua - dplyr::lag(impeua, 12))/dplyr::lag(impeua, 12)) %>% 
+  filter(periodo == "2021-07-01") %>% 
+  select(var_mes_exp, var_12m_exp) %>% 
+  mutate(var_mes_exp = paste0(format(round(var_mes_exp*100 ,2),
+                                     big.mark = ".",
+                                     decimal.mark = ","), "%")) %>% 
+  mutate(var_12m_exp = paste0(format(round(var_12m_exp*100 ,2),
+                                     big.mark = ".",
+                                     decimal.mark = ","), "%"))
+
+
+#### Exportação EUA ------------------
+exp_geral_table_eua <- comex %>%
+  dplyr::select(expeua, periodo) %>%
+  arrange(periodo) %>% 
+  mutate(var_mes_exp = (expeua - dplyr::lag(expeua, 1))/dplyr::lag(expeua, 1)) %>% 
+  mutate(var_12m_exp = (expeua - dplyr::lag(expeua, 12))/dplyr::lag(expeua, 12)) %>% 
+  filter(periodo == "2021-07-01") %>% 
+  select(var_mes_exp, var_12m_exp) %>% 
+  mutate(var_mes_exp = paste0(format(round(var_mes_exp*100 ,2),
+                                     big.mark = ".",
+                                     decimal.mark = ","), "%")) %>% 
+  mutate(var_12m_exp = paste0(format(round(var_12m_exp*100 ,2),
+                                     big.mark = ".",
+                                     decimal.mark = ","), "%"))
+
+
+#### Importação Europa ------------------
+imp_geral_table_europa <- comex %>%
+  dplyr::select(impeuro, periodo) %>%
+  arrange(periodo) %>% 
+  mutate(var_mes_exp = (impeuro - dplyr::lag(impeuro, 1))/dplyr::lag(impeuro, 1)) %>% 
+  mutate(var_12m_exp = (impeuro - dplyr::lag(impeuro, 12))/dplyr::lag(impeuro, 12)) %>% 
+  filter(periodo == "2021-07-01") %>% 
+  select(var_mes_exp, var_12m_exp) %>% 
+  mutate(var_mes_exp = paste0(format(round(var_mes_exp*100 ,2),
+                                     big.mark = ".",
+                                     decimal.mark = ","), "%")) %>% 
+  mutate(var_12m_exp = paste0(format(round(var_12m_exp*100 ,2),
+                                     big.mark = ".",
+                                     decimal.mark = ","), "%"))
+
+
+#### Exportação Europa ------------------
+exp_geral_table_europa <- comex %>%
+  dplyr::select(expoeuro, periodo) %>%
+  arrange(periodo) %>% 
+  mutate(var_mes_exp = (expoeuro - dplyr::lag(expoeuro, 1))/dplyr::lag(expoeuro, 1)) %>% 
+  mutate(var_12m_exp = (expoeuro - dplyr::lag(expoeuro, 12))/dplyr::lag(expoeuro, 12)) %>% 
+  filter(periodo == "2021-07-01") %>% 
+  select(var_mes_exp, var_12m_exp) %>% 
+  mutate(var_mes_exp = paste0(format(round(var_mes_exp*100 ,2),
+                                     big.mark = ".",
+                                     decimal.mark = ","), "%")) %>% 
+  mutate(var_12m_exp = paste0(format(round(var_12m_exp*100 ,2),
+                                     big.mark = ".",
+                                     decimal.mark = ","), "%"))
+
+
+
+#### Importação China ------------------
+imp_geral_table_china <- comex %>%
+  dplyr::select(impchn, periodo) %>%
+  arrange(periodo) %>% 
+  mutate(var_mes_exp = (impchn - dplyr::lag(impchn, 1))/dplyr::lag(impchn, 1)) %>% 
+  mutate(var_12m_exp = (impchn - dplyr::lag(impchn, 12))/dplyr::lag(impchn, 12)) %>% 
+  filter(periodo == "2021-07-01") %>% 
+  select(var_mes_exp, var_12m_exp) %>% 
+  mutate(var_mes_exp = paste0(format(round(var_mes_exp*100 ,2),
+                                     big.mark = ".",
+                                     decimal.mark = ","), "%")) %>% 
+  mutate(var_12m_exp = paste0(format(round(var_12m_exp*100 ,2),
+                                     big.mark = ".",
+                                     decimal.mark = ","), "%"))
+
+
+#### Exportação China ------------------
+exp_geral_table_china <- comex %>%
+  dplyr::select(expchn, periodo) %>%
+  arrange(periodo) %>% 
+  mutate(var_mes_exp = (expchn - dplyr::lag(expchn, 1))/dplyr::lag(expchn, 1)) %>% 
+  mutate(var_12m_exp = (expchn - dplyr::lag(expchn, 12))/dplyr::lag(expchn, 12)) %>% 
+  filter(periodo == "2021-07-01") %>% 
+  select(var_mes_exp, var_12m_exp) %>% 
+  mutate(var_mes_exp = paste0(format(round(var_mes_exp*100 ,2),
+                                     big.mark = ".",
+                                     decimal.mark = ","), "%")) %>% 
+  mutate(var_12m_exp = paste0(format(round(var_12m_exp*100 ,2),
+                                     big.mark = ".",
+                                     decimal.mark = ","), "%"))
+
+
+#### Importação Argentina ------------------
+imp_geral_table_arg <- comex %>%
+  dplyr::select(imparg, periodo) %>%
+  arrange(periodo) %>% 
+  mutate(var_mes_exp = (imparg - dplyr::lag(imparg, 1))/dplyr::lag(imparg, 1)) %>% 
+  mutate(var_12m_exp = (imparg - dplyr::lag(imparg, 12))/dplyr::lag(imparg, 12)) %>% 
+  filter(periodo == "2021-07-01") %>% 
+  select(var_mes_exp, var_12m_exp) %>% 
+  mutate(var_mes_exp = paste0(format(round(var_mes_exp*100 ,2),
+                                     big.mark = ".",
+                                     decimal.mark = ","), "%")) %>% 
+  mutate(var_12m_exp = paste0(format(round(var_12m_exp*100 ,2),
+                                     big.mark = ".",
+                                     decimal.mark = ","), "%"))
+
+
+#### Exportação Argentina ------------------
+exp_geral_table_arg <- comex %>%
+  dplyr::select(exparg, periodo) %>%
+  arrange(periodo) %>% 
+  mutate(var_mes_exp = (exparg - dplyr::lag(exparg, 1))/dplyr::lag(exparg, 1)) %>% 
+  mutate(var_12m_exp = (exparg - dplyr::lag(exparg, 12))/dplyr::lag(exparg, 12)) %>% 
+  filter(periodo == "2021-07-01") %>% 
+  select(var_mes_exp, var_12m_exp) %>% 
+  mutate(var_mes_exp = paste0(format(round(var_mes_exp*100 ,2),
+                                     big.mark = ".",
+                                     decimal.mark = ","), "%")) %>% 
+  mutate(var_12m_exp = paste0(format(round(var_12m_exp*100 ,2),
+                                     big.mark = ".",
+                                     decimal.mark = ","), "%"))
+
+
+# https://www.gov.br/anac/pt-br/assuntos/dados-e-estatisticas/dados-estatisticos
+
+# dados baixados manualmente
+dados_aviacao_anac_21 <- read.csv2("https://www.gov.br/anac/pt-br/assuntos/dados-e-estatisticas/dados-estatisticos/arquivos/resumo_anual_2021.csv")
+dados_aviacao_anac_20 <- read.csv2("https://www.gov.br/anac/pt-br/assuntos/dados-e-estatisticas/dados-estatisticos/arquivos/resumo_anual_2020.csv")
+dados_aviacao_anac_19 <- read.csv2("https://www.gov.br/anac/pt-br/assuntos/dados-e-estatisticas/dados-estatisticos/arquivos/resumo_anual_2019.csv")
+
+# juntando
+dados_aviacao_anac <- rbind(dados_aviacao_anac_21, dados_aviacao_anac_20, dados_aviacao_anac_19)
+
+#########################################################################
+################## Ajustando dados --------------------------------------
+#########################################################################
+
+# criando data completa
+dados_aviacao_anac <- dados_aviacao_anac %>% mutate(date = paste0("01/", MÊS, "/", ANO))
+
+# convertendo em date
+dados_aviacao_anac$date <- dmy(dados_aviacao_anac$date)
+
+
+################ tipo de voo #########
+dados_aviacao_anac$tipo_voo <- ifelse(dados_aviacao_anac$AEROPORTO.DE.ORIGEM..PAÍS. == "BRASIL" & dados_aviacao_anac$AEROPORTO.DE.DESTINO..PAÍS. == "BRASIL",
+                                      "Doméstico",
+                                      ifelse(dados_aviacao_anac$AEROPORTO.DE.ORIGEM..PAÍS. != "BRASIL" & dados_aviacao_anac$AEROPORTO.DE.DESTINO..PAÍS. == "BRASIL",
+                                             "Exterior para o Brasil",
+                                             ifelse(dados_aviacao_anac$AEROPORTO.DE.ORIGEM..PAÍS. == "BRASIL" & dados_aviacao_anac$AEROPORTO.DE.DESTINO..PAÍS. != "BRASIL",
+                                                    "Brasil para o exterior",
+                                                    "Outros")))
+############### selecionando colunas de interesse
+dados_tipo_voo <- dados_aviacao_anac %>% 
+  select(date, tipo_voo, PASSAGEIROS.PAGOS, PASSAGEIROS.GRÁTIS)
+
+
+########## transformando valores ausentes em zero
+dados_tipo_voo[is.na(dados_tipo_voo)] <- 0
+
+####### agrupando por data e tipo de vôo
+dados_tipo_voo <- dados_tipo_voo %>%
+  group_by(date, tipo_voo) %>%
+  summarise(total_passageiros = sum(PASSAGEIROS.PAGOS,
+                                    PASSAGEIROS.GRÁTIS))
+
+
+
+variacao_chegadas_voo <- dados_tipo_voo %>%
+  dplyr::filter(tipo_voo == "Exterior para o Brasil") %>% 
+  dplyr::select(date, total_passageiros) %>%
+  dplyr::arrange(date) %>% 
+  as.data.frame() %>% 
+  dplyr::mutate(var_mes = (total_passageiros - dplyr::lag(total_passageiros, 1))/dplyr::lag(total_passageiros, 1)) %>% 
+  dplyr::mutate(var_12m = (total_passageiros - dplyr::lag(total_passageiros, 12))/dplyr::lag(total_passageiros, 12)) %>% 
+  dplyr::filter(date == "2021-07-01") %>% 
+  dplyr::select(var_mes, var_12m) %>% 
+  dplyr::mutate(var_mes = paste0(format(round(var_mes*100 ,2),
+                                     big.mark = ".",
+                                     decimal.mark = ","), "%")) %>% 
+  dplyr::mutate(var_12m = paste0(format(round(var_12m*100 ,2),
+                                     big.mark = ".",
+                                     decimal.mark = ","), "%"))
+
+variacao_saidas_voo <- dados_tipo_voo %>%
+  dplyr::filter(tipo_voo == "Brasil para o exterior") %>% 
+  dplyr::select(date, total_passageiros) %>%
+  dplyr::arrange(date) %>% 
+  as.data.frame() %>% 
+  dplyr::mutate(var_mes = (total_passageiros - dplyr::lag(total_passageiros, 1))/dplyr::lag(total_passageiros, 1)) %>% 
+  dplyr::mutate(var_12m = (total_passageiros - dplyr::lag(total_passageiros, 12))/dplyr::lag(total_passageiros, 12)) %>% 
+  dplyr::filter(date == "2021-07-01") %>% 
+  dplyr::select(var_mes, var_12m) %>% 
+  dplyr::mutate(var_mes = paste0(format(round(var_mes*100 ,2),
+                                     big.mark = ".",
+                                     decimal.mark = ","), "%")) %>% 
+  dplyr::mutate(var_12m = paste0(format(round(var_12m*100 ,2),
+                                     big.mark = ".",
+                                     decimal.mark = ","), "%"))
+
+
+##### funcao acumulado 12 meses ####
+acum_12 <-function(vector){
+  acum_12 <-vector+lag(vector,1)+
+    lag(vector,2)+lag(vector,3)+
+    lag(vector,4)+lag(vector,5)+
+    lag(vector,6)+lag(vector,7)+
+    lag(vector,8)+lag(vector,9)+
+    lag(vector,10)+lag(vector,11)
+}
+
+###### Investimento no País #######
+id <- get_series(22885, start_date='2000-01-01')
+
+
+id <- id %>% mutate(acumulado=acum_12(`22885`)) %>%
+  mutate(acumulado=acumulado/1000) %>%   
+  filter(date >= "2020-01-01")
+
+
+############### Produtos mais importados --------------------
+
+
+#### Mês referência -------------------------------
+import_ncm <- ComexstatR::pesquisar_comex_stat(ano_inicial = 2021,
+                                                 ano_final = 2021,
+                                                 mes_inicial = 8,
+                                                 mes_final = 8,
+                                                 tipo_op = "imp",
+                                                 detalhamentos = "ncm",
+                                                 valor_FOB = TRUE,
+                                                 valor_kg = FALSE)
+
+
+import_ncm$vlFob <- as.numeric(import_ncm$vlFob)
+import_ncm$coNcm <- as.numeric(import_ncm$coNcm)
+import_ncm <- import_ncm %>% arrange(desc(vlFob)) %>% slice(1:5) 
+
+
+#### 1 mês -----------------------------------
+import_ncm_m <- ComexstatR::pesquisar_comex_stat(ano_inicial = 2021,
+                                               ano_final = 2021,
+                                               mes_inicial = 7,
+                                               mes_final = 7,
+                                               tipo_op = "imp",
+                                               detalhamentos = "ncm",
+                                               valor_FOB = TRUE,
+                                               valor_kg = FALSE)
+
+
+import_ncm_m$vlFob <- as.numeric(import_ncm_m$vlFob)
+import_ncm_m$coNcm <- as.numeric(import_ncm_m$coNcm)
+
+import_ncm_m <- import_ncm_m %>% filter(coNcm %in% c(import_ncm$coNcm))
+
+#### 12 meses --------------------------------
+import_ncm_2020 <- ComexstatR::pesquisar_comex_stat(ano_inicial = 2020,
+                                               ano_final = 2020,
+                                               mes_inicial = 8,
+                                               mes_final = 8,
+                                               tipo_op = "imp",
+                                               detalhamentos = "ncm",
+                                               valor_FOB = TRUE,
+                                               valor_kg = FALSE)
+
+
+import_ncm_2020$vlFob <- as.numeric(import_ncm_2020$vlFob)
+import_ncm_2020$coNcm <- as.numeric(import_ncm_2020$coNcm)
+
+
+import_ncm_2020 <- import_ncm_2020 %>% filter(coNcm %in% c(import_ncm$coNcm))
+
+
+########### Dataframe ------------------------
+produtos_import <- data.frame(produto = import_ncm$noNcmpt,
+           total = import_ncm$vlFob,
+           var_12m = ((import_ncm$vlFob - import_ncm_2020$vlFob)/import_ncm_2020$vlFob),
+           var_1m = ((import_ncm$vlFob - import_ncm_m$vlFob)/import_ncm_m$vlFob))
+
+
+produtos_import <- produtos_import %>% mutate(var_12m = paste0(format(round(var_12m*100,2), big.mark = ".", decimal.mark = ","), "%")) %>% mutate(var_1m = paste0(format(round(var_1m*100,2), big.mark = ".", decimal.mark = ","), "%"))
+
+############## Produtos mais exportados -----------------------------
+
+
+#### Mês referência -------------------------------
+export_ncm <- ComexstatR::pesquisar_comex_stat(ano_inicial = 2021,
+                                                 ano_final = 2021,
+                                                 mes_inicial = 8,
+                                                 mes_final = 8,
+                                                 tipo_op = "exp",
+                                                 detalhamentos = "ncm",
+                                                 valor_FOB = TRUE,
+                                                 valor_kg = FALSE)
+
+
+export_ncm$vlFob <- as.numeric(export_ncm$vlFob)
+export_ncm$coNcm <- as.numeric(export_ncm$coNcm)
+export_ncm <- export_ncm %>% arrange(desc(vlFob)) %>% slice(1:5) 
+
+
+#### 1 mês -----------------------------------
+export_ncm_m <- ComexstatR::pesquisar_comex_stat(ano_inicial = 2021,
+                                               ano_final = 2021,
+                                               mes_inicial = 7,
+                                               mes_final = 7,
+                                               tipo_op = "exp",
+                                               detalhamentos = "ncm",
+                                               valor_FOB = TRUE,
+                                               valor_kg = FALSE)
+
+
+export_ncm_m$vlFob <- as.numeric(export_ncm_m$vlFob)
+export_ncm_m$coNcm <- as.numeric(export_ncm_m$coNcm)
+
+export_ncm_m <- export_ncm_m %>% filter(coNcm %in% c(export_ncm$coNcm))
+
+#### 12 meses --------------------------------
+export_ncm_2020 <- ComexstatR::pesquisar_comex_stat(ano_inicial = 2020,
+                                               ano_final = 2020,
+                                               mes_inicial = 8,
+                                               mes_final = 8,
+                                               tipo_op = "exp",
+                                               detalhamentos = "ncm",
+                                               valor_FOB = TRUE,
+                                               valor_kg = FALSE)
+
+
+export_ncm_2020$vlFob <- as.numeric(export_ncm_2020$vlFob)
+export_ncm_2020$coNcm <- as.numeric(export_ncm_2020$coNcm)
+
+
+export_ncm_2020 <- export_ncm_2020 %>% filter(coNcm %in% c(export_ncm$coNcm))
+
+
+########### Dataframe ------------------------
+produtos_export <- data.frame(produto = export_ncm$noNcmpt,
+           total = export_ncm$vlFob,
+           var_12m = ((export_ncm$vlFob - export_ncm_2020$vlFob)/export_ncm_2020$vlFob),
+           var_1m = ((export_ncm$vlFob - export_ncm_m$vlFob)/export_ncm_m$vlFob))
+
+produtos_export <- produtos_export %>% mutate(var_12m = paste0(format(round(var_12m*100,2), big.mark = ".", decimal.mark = ","), "%")) %>% mutate(var_1m = paste0(format(round(var_1m*100,2), big.mark = ".", decimal.mark = ","), "%"))
+
+######### Tabelas
+
+#tabela_impor_comex <- read.csv2("tabela_impor_comex.csv")
+#tabela_expor_comex <- read.csv2("tabela_expor_comex.csv")
+
+
+```
+
+
+```{r, include=FALSE, warning=FALSE}
+
+#########################################################################
+###################### Calculo das Tabelas ##############################
+#########################################################################
+
+################## Taxa de câmbio - compra - média -------------------------
+
+############### Var Fev/21 - Jan/21 -----------------------------------
+
+# # Fevereiro 21
+# v_1 <- as.numeric(txa_cambio_compra_media %>% dplyr::filter(date == "2021-02-01") %>% select(value))
+# 
+# # Janeiro 21
+# v_2 <- as.numeric(txa_cambio_compra_media %>% dplyr::filter(date == "2021-01-01") %>% select(value))
+# 
+# # variação de um mês para o outro
+# var_12m_txa_cambio <- (v_1*100/v_2)-100
+# 
+# tabela1 <- data.frame(Período = c("Mês", "12 meses", "Ano"),
+#                       Variação = c(var_12m_txa_cambio, 4, 6))
+# 
+# 
+# tabela1$Variação <- round(tabela1$Variação,2)
+
+
+tabela_dolar <- data.frame(Período = c("Mês", "12 meses"),
+                           Variação = c("+0,42%","-6,07%"))
+
+
+tabela_comex_1 <- data.frame(Período = c("Mês", "12 meses"),
+                           `Variação (exportação)` = c(exp_geral_table$var_mes_exp,exp_geral_table$var_12m_exp),
+                           `Variação (importação)` = c(imp_geral_table$var_mes_exp,imp_geral_table$var_12m_exp))
+
+tabela_comex_2 <- data.frame(Período = c("Mês", "12 meses"),
+                           `Variação (exportação)` = c(exp_geral_table_eua$var_mes_exp, exp_geral_table_eua$var_12m_exp),
+                           `Variação (importação)` = c(imp_geral_table_eua$var_mes_exp, imp_geral_table_eua$var_12m_exp))
+
+tabela_comex_3 <- data.frame(Período = c("Mês", "12 meses"),
+                           `Variação (exportação)` = c(exp_geral_table_europa$var_mes_exp, exp_geral_table_europa$var_12m_exp),
+                           `Variação (importação)` = c(imp_geral_table_europa$var_mes_exp, imp_geral_table_europa$var_12m_exp))
+
+tabela_comex_4 <- data.frame(Período = c("Mês", "12 meses"),
+                           `Variação (exportação)` = c(exp_geral_table_china$var_mes_exp, exp_geral_table_china$var_12m_exp),
+                           `Variação (importação)` = c(imp_geral_table_europa$var_mes_exp, imp_geral_table_china$var_12m_exp))
+
+tabela_comex_5 <- data.frame(Período = c("Mês", "12 meses"),
+                           `Variação (exportação)` = c(exp_geral_table_arg$var_mes_exp, exp_geral_table_arg$var_12m_exp),
+                           `Variação (importação)` = c(imp_geral_table_arg$var_mes_exp, imp_geral_table_arg$var_12m_exp))
+
+
+tabela_aviacao <- data.frame(Período = c("Mês","12 meses"), 
+                             `Variação (saídas)` = c(variacao_saidas_voo$var_mes,variacao_saidas_voo$var_12m),
+                             `Variação (chegadas)` = c(variacao_chegadas_voo$var_mes,variacao_chegadas_voo$var_12m))
+
+
+```
+
+<br />
+
+<br />
+
+#### Saldo das transações correntes
+
+<br />
+
+```{r echo=FALSE}
+
+ ggplot()+
+  geom_line(data = tc_12 %>% filter(date >= "2010-01-01"), aes(y=`23079`, x=date), color="#008BBC", size=1)+
+  geom_hline(yintercept = 0, color="black", lty=2)+
+  scale_x_date(date_labels = "%b\n%Y", breaks = "11 month", expand = c(0.025,0.01)) +
+  scale_y_continuous(limits=c(-5, 2.5),
+                     breaks=seq(-5,2.5, 0.5))+
+  labs(title = "Transacões Correntes", subtitle = "Acumulado em 12 meses",
+       caption = "Fonte: BCB | Elaboração: Arazul Research",
+       y = "(% PIB)",
+       x = '') +
+  theme_minimal() +
+  theme(legend.position = "none",
+        axis.title.y = element_text(size=8),
+        plot.title = element_text(size=12, hjust = 0.5, face="bold"),
+        plot.subtitle = element_text(size=9, hjust = 0.5, face="bold"),
+        plot.caption = element_text(size = 2),
+        axis.text.y = element_text(face="bold", color="#000000",size=8),
+        axis.text.x = element_text(face="bold", color="#000000",size=8)) +
+  theme_xaringan(text_font_size = 10)
+```
+
+
+
+---
+
+<br />
+
+<br />
+
+#### Taxa de câmbio ajustada pela PPP
+
+<br />
+
+
+```{r,echo=FALSE,warning=FALSE}
+
+ggplot()+
+  geom_line(Cambio_PPP, mapping=aes(x = index(Cambio_PPP),
+                                    y = Cambio,
+                                    color = "Câmbio PPP"), size=1)+
+  geom_line(cambio, mapping=aes(x = index(Cambio_PPP),
+                                y = cambio ,
+                                color = "Câmbio Observado"), size=1)+
+  scale_color_manual(values=c("dodgerblue4","deepskyblue3"),name = "")+
+  labs(x="",y="R$/U$S", title = "Câmbio Observado vs Câmbio Ajustado pela PPP", 
+        caption = "Fonte: BCB,FRED | Elaboração: Arazul Research")+
+  scale_x_date(date_labels = "%b\n%Y", breaks = "14 month", expand = c(0.03,0.03),
+               limits = as.Date(c("1999-01-01","2021-06-01")))+
+  scale_y_continuous(limits=c(1, 6),
+                     breaks=seq(1,6))+
+ theme_minimal() +
+ theme(legend.position = "bottom",
+        axis.title.y = element_text(size=8),
+        plot.title = element_text(size=12, hjust = 0.5, face="bold"),
+        plot.caption = element_text(size = 2),
+        axis.text.y = element_text(face="bold", color="#000000",size=8),
+        axis.text.x = element_text(face="bold", color="#000000",size=8)) +
+  theme_xaringan(text_font_size = 10)
+
+
+```
+
+---
+
+
+<br />
+
+<br />
+
+#### Investimento Direto no País
+
+<br />
+
+```{r,echo=FALSE,warning=FALSE}
+
+#################
+
+ggplot(data=id)+
+  geom_bar(aes(y=acumulado, x=date, width=25, fill="#008BBC", label=acumulado),   
+           stat = "identity", size=1)+
+  geom_text(aes(y=round(acumulado, digits = 1), x=date,
+            label = round(acumulado, digits = 1), vjust= -sign(acumulado)), 
+            fontface = "bold", size = 3, color= "#0B0B3B")+
+  geom_hline(yintercept = 0, color="black" )+
+  scale_x_date(date_labels = "%b\n%Y", breaks = "1 month", expand = c(0,10)) +
+  scale_y_continuous(limits=c(0, 80),
+                     expand=c(0,0))+
+  scale_fill_identity(name = " ",
+                      breaks = c("#008BBC"),
+                      labels = c("Investimento Direto no País"),
+                      guide = "legend")+
+  scale_colour_identity(name = " ",
+                        breaks = c("#008BBC"),
+                        labels = c("Investimento Direto no País"),
+                        guide = "legend")+
+  labs(title = "Investimento Direto no País - Acumulado em 12 meses",
+       caption = "Fonte: BCB | Elaboração: Arazul Research",
+       y = "US$ Bilhões",
+       x = '') +
+  theme_minimal() +
+  theme(legend.position = "none",
+        axis.title.y = element_text(size=8),
+        plot.title = element_text(size=12, hjust = 0.5, face="bold"),
+        axis.text.y = element_text(face="bold", color="#000000",size=8),
+        axis.text.x = element_text(face="bold", color="#000000",size=8)) +
+  theme_xaringan(text_font_size = 10)
+
+
+```
+
+
+
+---
+background-image: url("parte2.png")
+background-position: center
+background-size: contain
+
+
+---
+
+<br />
+
+<br />
+
+#### Séries sobre câmbio
+
+<div class="container">
+  <div class="row">
+    <div class="col">
+```{r,echo=FALSE,warning=FALSE}
+
+
+##### Taxa de câmbio - R$ / US$ - comercial - compra - fim período
+
+ggplot(txa_cambio, aes(x = date, y = valor)) + 
+  geom_line(color = "deepskyblue3", size = 1.1) +
+  labs(y="Taxa de câmbio (R$/US$)", x="", fill="",
+       title = "Taxa de Câmbio",
+       caption = "Fonte: Bloomberg | Elaboração: Arazul Research") +
+  theme_minimal() +
+  theme(legend.position = "none",
+        axis.title.y = element_text(size=8),
+        plot.title = element_text(size=12, hjust = 0.5, face="bold"),
+        plot.caption = element_text(size = 2),
+        axis.text.y = element_text(face="bold", color="#000000",size=8),
+        axis.text.x = element_text(face="bold", color="#000000",size=8)) +
+  scale_x_date(date_labels = "%b\n%Y", breaks = "2 month") +
+  theme_xaringan(text_font_size = 10)
+
+
+
+```
+    </div>
+    <div class="col">
+```{r echo=FALSE}
+knitr::kable(head(tabela_dolar),
+             format = 'html',
+             align = "c",
+             col.names = c("     Período     ", "     Variação     "),
+             caption = "Referência: Agosto/2021")
+```
+    </div>
+  </div>
+</div>
+
+
+---
+
+<br />
+
+<br />
+
+#### Séries sobre câmbio
+
+<br />
+
+```{r,echo=FALSE, warning=FALSE}
+
+################ Câmbio contratado comercial
+
+p9 <- ggplot(Cambio_contratado_comercial, aes(x = date, y = value, fill = Color)) + 
+  geom_bar(position = "dodge", stat = "identity") +
+  labs(y="US$ (bilhões)", x="", fill="",
+       title = "Câmbio contratado comercial",
+       caption = "Fonte: IPEA | Elaboração: Arazul Research") +
+  geom_text(aes(label = paste0(format(round(value,2), big.mark = ".", decimal.mark = ",")),
+                vjust = ifelse(value >= 0, -0.5, 1.5)),size = 2.5,
+                color = 'black',fontface='bold') +
+  scale_fill_manual(values = c("deepskyblue3","#831b2c")) +
+  theme_minimal() +
+  theme(legend.position = "none",
+        axis.title.y = element_text(size=8),
+        plot.title = element_text(size=12, hjust = 0.5, face="bold"),
+        plot.caption = element_text(size = 8),
+        axis.text.y = element_text(face="bold", color="#000000",size=8),
+        axis.text.x = element_text(face="bold", color="#000000",size=8)) +
+  scale_x_date(date_labels = "%b\n%Y", breaks = "2 month", expand = c(0,4)) +
+  theme_xaringan(text_font_size = 10)
+
+
+
+################ Câmbio contratado financeiro
+
+p10 <-  ggplot(Cambio_contratado_financeiro, aes(x = date, y = value, fill = Color)) + 
+  geom_bar(position = "dodge", stat = "identity") +
+  labs(y="US$ (bilhões)", x="", fill="",
+       title = "Câmbio contratado financeiro",
+       caption = "Fonte: IPEA | Elaboração: Arazul Research") +
+  geom_text(aes(label = paste0(format(round(value,2), big.mark = ".", decimal.mark = ",")),
+                vjust = ifelse(value >= 0, -0.5, 1.5)),size = 2.5,
+                color = 'black',fontface='bold') +
+  scale_fill_manual(values = c("deepskyblue3","#831b2c")) +
+  theme_minimal() +
+  theme(legend.position = "none",
+        axis.title.y = element_text(size=8),
+        plot.title = element_text(size=12, hjust = 0.5, face="bold"),
+        plot.caption = element_text(size = 8),
+        axis.text.y = element_text(face="bold", color="#000000",size=8),
+        axis.text.x = element_text(face="bold", color="#000000",size=8)) +
+  scale_x_date(date_labels = "%b\n%Y", breaks = "2 month", expand = c(0,4)) +
+  theme_xaringan(text_font_size = 10)
+  
+
+
+grid.arrange(p9, p10, ncol = 2)
+
+
+
+
+```
+
+---
+background-image: url("parte3.png")
+background-position: center
+background-size: contain
+
+
+---
+
+<br />
+
+<br />
+
+#### Fluxo de comércio exterior
+
+<div class="container">
+  <div class="row">
+    <div class="col">
+```{r,echo=FALSE, warning=FALSE}
+
+
+# Definindo cores
+colors <- c("Exportação" = "deepskyblue3", "Importação" = "dodgerblue3")
+
+########## Totais ######################################################
+ggplot(comex) + 
+  geom_line(mapping=aes(x=periodo, y=exptotal, col="Exportações"), size = 1.1)+
+  geom_line(mapping=aes(x=periodo, y=imptotal, col="Importações"), size = 1.1)+
+  scale_color_manual(values=c("deepskyblue3","dodgerblue4"),name = "") +
+  labs(y="US$ (Bilhões)", x="", fill="",
+       title = "Exportações e Importações do Brasil Totais (US$ FOB)",
+       caption = "Fonte: IPEA | Elaboração: Arazul Research")+
+  scale_x_date(date_labels = "%b\n%Y", breaks = "1 months", labels = date_format("%b\n%y"), 
+               limits = as.Date(c("2020-01-01","2021-08-10"))) +
+  theme_minimal() +
+  theme(legend.position = "bottom",
+        axis.title.y = element_text(size=8),
+        plot.title = element_text(size=12, hjust = 0.5, face="bold"),
+        plot.caption = element_text(size = 8),
+        axis.text.y = element_text(face="bold", color="#000000",size=8),
+        axis.text.x = element_text(face="bold", color="#000000",size=8)) +
+  theme_xaringan(text_font_size = 10)
+
+
+```
+    </div>
+    <div class="col">
+```{r echo=FALSE}
+knitr::kable(head(tabela_comex_1),
+             format = 'html',
+             align = "c",
+             col.names = c("Período", "Variação (exportação)", "Variação (importação)"),
+             caption = "Referência: Agosto/2021")
+```
+    </div>
+  </div>
+</div>
+
+
+
+---
+
+<br />
+
+<br />
+
+#### Fluxo de comércio exterior
+
+<div class="container">
+  <div class="row">
+    <div class="col">
+```{r,echo=FALSE, warning=FALSE}
+
+
+# Definindo cores
+colors <- c("Exportação" = "deepskyblue3", "Importação" = "dodgerblue3")
+
+####### Eua ############################################################
+
+ggplot(comex) + 
+  geom_line(mapping=aes(x=periodo, y=expeua, col="Exportações"), size = 1.1)+
+  geom_line(mapping=aes(x=periodo, y=impeua, col="Importações"), size = 1.1)+
+  scale_color_manual(values=c("deepskyblue3","dodgerblue4"),name = "") +
+  labs(y="US$ (Bilhões)", x="", fill="",
+       title = "Exportações e Importações com os EUA (US$ FOB)",
+       caption = "Fonte: IPEA | Elaboração: Arazul Research") +
+  scale_x_date(date_labels = "%b\n%Y", breaks = "1 months", labels = date_format("%b\n%y"), 
+               limits = as.Date(c("2020-01-01","2021-08-10"))) +
+  theme_minimal() +
+  theme(legend.position = "bottom",
+        axis.title.y = element_text(size=8),
+        plot.title = element_text(size=12, hjust = 0.5, face="bold"),
+        plot.caption = element_text(size = 8),
+        axis.text.y = element_text(face="bold", color="#000000",size=8),
+        axis.text.x = element_text(face="bold", color="#000000",size=8)) +
+  theme_xaringan(text_font_size = 10)
+
+
+```
+    </div>
+    <div class="col">
+```{r echo=FALSE}
+knitr::kable(head(tabela_comex_2),
+             format = 'html',
+             align = "c",
+             col.names = c("Período", "Variação (exportação)", "Variação (importação)"),
+             caption = "Referência: Agosto/2021")
+```
+    </div>
+  </div>
+</div>
+
+
+---
+
+<br />
+
+<br />
+
+#### Fluxo de comércio exterior
+
+<div class="container">
+  <div class="row">
+    <div class="col">
+```{r,echo=FALSE, warning=FALSE}
+
+
+# Definindo cores
+colors <- c("Exportação" = "deepskyblue3", "Importação" = "dodgerblue3")
+
+##### Europa ###########################################################
+ggplot(comex) + 
+  geom_line(mapping=aes(x=periodo, y=expoeuro, col="Exportações"), size = 1.1)+
+  geom_line(mapping=aes(x=periodo, y=impeuro, col="Importações"), size = 1.1)+
+  scale_color_manual(values=c("deepskyblue3","dodgerblue4"),name = "") +
+  labs(y="US$ (Bilhões)", x="", fill="",
+       title = "Exportações e Importações com a Europa (US$ FOB)",
+       caption = "Fonte: IPEA | Elaboração: Arazul Research") +
+  scale_x_date(date_labels = "%b\n%Y", breaks = "1 months", labels = date_format("%b\n%y"), 
+               limits = as.Date(c("2020-01-01","2021-08-10"))) +
+  theme_minimal() +
+  theme(legend.position = "bottom",
+        axis.title.y = element_text(size=8),
+        plot.title = element_text(size=12, hjust = 0.5, face="bold"),
+        plot.caption = element_text(size = 8),
+        axis.text.y = element_text(face="bold", color="#000000",size=8),
+        axis.text.x = element_text(face="bold", color="#000000",size=8)) +
+  theme_xaringan(text_font_size = 10)
+
+
+```
+    </div>
+    <div class="col">
+```{r echo=FALSE}
+knitr::kable(head(tabela_comex_3),
+             format = 'html',
+             align = "c",
+             col.names = c("Período", "Variação (exportação)", "Variação (importação)"),
+             caption = "Referência: Agosto/2021")
+```
+    </div>
+  </div>
+</div>
+
+
+---
+
+<br />
+
+<br />
+
+#### Fluxo de comércio exterior
+
+<div class="container">
+  <div class="row">
+    <div class="col">
+```{r,echo=FALSE, warning=FALSE}
+
+
+# Definindo cores
+colors <- c("Exportação" = "deepskyblue3", "Importação" = "dodgerblue3")
+
+#### China #############################################################
+ggplot(comex) + 
+  geom_line(mapping=aes(x=periodo, y=expchn, col="Exportações"), size = 1.1)+
+  geom_line(mapping=aes(x=periodo, y=impchn, col="Importações"), size = 1.1)+
+  scale_color_manual(values=c("deepskyblue3","dodgerblue4"),name = "") +
+  labs(y="US$ (Bilhões)", x="", fill="",
+       title = "Exportações e Importações com a China (US$ FOB)",
+       caption = "Fonte: IPEA | Elaboração: Arazul Research") +
+  scale_x_date(date_labels = "%b\n%Y", breaks = "1 months", labels = date_format("%b\n%y"), 
+               limits = as.Date(c("2020-01-01","2021-08-10"))) +
+  theme_minimal() +
+  theme(legend.position = "bottom",
+        axis.title.y = element_text(size=8),
+        plot.title = element_text(size=12, hjust = 0.5, face="bold"),
+        plot.caption = element_text(size = 8),
+        axis.text.y = element_text(face="bold", color="#000000",size=8),
+        axis.text.x = element_text(face="bold", color="#000000",size=8)) +
+  theme_xaringan(text_font_size = 10)
+
+
+```
+    </div>
+    <div class="col">
+```{r echo=FALSE}
+knitr::kable(head(tabela_comex_4),
+             format = 'html',
+             align = "c",
+             col.names = c("Período", "Variação (exportação)", "Variação (importação)"),
+             caption = "Referência: Agosto/2021")
+```
+    </div>
+  </div>
+</div>
+
+---
+
+<br />
+
+<br />
+
+#### Fluxo de comércio exterior
+
+<div class="container">
+  <div class="row">
+    <div class="col">
+```{r,echo=FALSE, warning=FALSE}
+
+
+# Definindo cores
+colors <- c("Exportação" = "deepskyblue3", "Importação" = "dodgerblue3")
+
+##### Argentina ########################################################
+
+ggplot(comex) + 
+  geom_line(mapping=aes(x=periodo, y=exparg, col="Exportações"), size = 1.1)+
+  geom_line(mapping=aes(x=periodo, y=imparg, col="Importações"), size = 1.1)+
+  scale_color_manual(values=c("deepskyblue3","dodgerblue4"),name = "") +
+  labs(y="US$ (Bilhões)", x="", fill="",
+       title = "Exportações e Importações com a Argentina (US$ FOB)",
+       caption = "Fonte: IPEA | Elaboração: Arazul Research") +
+  scale_x_date(date_labels = "%b\n%Y",
+               breaks = "1 months",
+               labels = date_format("%b\n%y"), 
+               limits = as.Date(c("2020-01-01","2021-08-10"))) +
+  theme_minimal() +
+  theme(legend.position = "bottom",
+        axis.title.y = element_text(size=8),
+        plot.title = element_text(size=12, hjust = 0.5, face="bold"),
+        plot.caption = element_text(size = 8),
+        axis.text.y = element_text(face="bold", color="#000000",size=8),
+        axis.text.x = element_text(face="bold", color="#000000",size=8)) +
+  theme_xaringan(text_font_size = 10)
+
+
+```
+    </div>
+    <div class="col">
+```{r echo=FALSE}
+knitr::kable(head(tabela_comex_5),
+             format = 'html',
+             align = "c",
+             col.names = c("Período", "Variação (exportação)", "Variação (importação)"),
+             caption = "Referência: Agosto/2021")
+```
+    </div>
+  </div>
+</div>
+
+
+---
+
+<br />
+
+<br />
+
+
+#### Produtos mais exportados e importados
+
+<br />
+
+```{r,echo=FALSE, warning=FALSE}
+
+
+# Definindo cores
+colors <- c("Exportação" = "deepskyblue3", "Importação" = "dodgerblue3")
+
+### exportação --------------------------
+
+
+export_ncm<- export_ncm %>%
+      dplyr::mutate(noNcmpt = str_wrap(noNcmpt, width = 30)) %>% 
+      mutate(vlFob = vlFob/1000000)
+
+
+
+exp_prod_graph <- ggplot(export_ncm, aes(x = vlFob,  y = reorder(noNcmpt, +vlFob))) + 
+  geom_col(fill = "deepskyblue3") + 
+  geom_text(aes(label = paste0("US$ ",format(round(vlFob,2), big.mark = ".", decimal.mark = ",")),
+                hjust = ifelse(vlFob >= 0, -0.5, 1.5)),size = 2,
+            color = 'black',fontface='bold') +
+  scale_x_continuous(labels = scales::dollar_format(prefix = "US$",big.mark = ".", decimal.mark = ","),limits = c(0,export_ncm$vlFob + 1000)) + 
+  labs(title = "5 produtos mais exportados no Brasil\n em Julho de 2021 (em US$ Milhões)", y = "", x="US$",
+       caption = paste("Fonte: Comex | Elaboração: Arazul Research")) +
+  theme_minimal() +
+  theme(legend.position = "none",
+        axis.title.y = element_text(size=8),
+        axis.title.x = element_text(size=8),
+        plot.title = element_text(size=12, hjust = 0.5, face="bold"),
+        plot.caption = element_text(size = 8),
+        axis.text.y = element_text(face="bold", color="#000000",size=6),
+        axis.text.x = element_text(face="bold", color="#000000",size=6)) +
+  theme_xaringan(text_font_size = 10)
+   
+
+
+### importação --------------------------
+
+import_ncm<- import_ncm %>%
+      dplyr::mutate(noNcmpt = str_wrap(noNcmpt, width = 30)) %>% 
+      mutate(vlFob = vlFob/1000000)
+    
+
+imp_prod_graph <- ggplot(import_ncm, aes(x = vlFob,  y = reorder(noNcmpt, +vlFob))) + 
+  geom_col(fill = "deepskyblue3") + 
+  geom_text(aes(label = paste0("US$ ",format(round(vlFob,2), big.mark = ".", decimal.mark = ",")),
+                hjust = ifelse(vlFob >= 0, -0.5, 1.5)),size = 2,
+            color = 'black',fontface='bold') +
+  scale_x_continuous(labels = scales::dollar_format(prefix = "US$",big.mark = ".", decimal.mark = ","), limits = c(0, import_ncm$vlFob + 1000)) +
+  labs(title = "5 produtos mais importados no Brasil\n em Julho de 2021 (em US$ Milhões)", y = "", x="US$",
+       caption = paste("Fonte: Comex | Elaboração: Arazul Research")) +
+  theme_minimal() +
+  theme(legend.position = "bottom",
+        axis.title.y = element_text(size=8),
+        axis.title.x = element_text(size=8),
+        plot.title = element_text(size=12, hjust = 0.5, face="bold"),
+        plot.caption = element_text(size = 8),
+        axis.text.y = element_text(face="bold", color="#000000",size=6),
+        axis.text.x = element_text(face="bold", color="#000000",size=6)) +
+  theme_xaringan(text_font_size = 10)
+  
+
+
+gridExtra::grid.arrange(exp_prod_graph, imp_prod_graph, ncol = 2)
+
+
+```
+
+
+---
+
+<br />
+<br />
+<br />
+<br />
+<br />
+<br />
+
+
+```{r,echo=FALSE, warning=FALSE}
+
+knitr::kable(head(produtos_export),
+             format = 'html',
+             align = "c",
+             format.args = list(big.mark = ".", decimal.mark = ","),
+             col.names = c("Produto",
+                           "Valor exportado em Agosto/21 (US$)",
+                           "Variação (12 meses)",
+                           "Variação mensal"),
+             caption = "Produtos mais exportados no mês (Referência: Agosto/2021)") %>% 
+             kable_styling(font_size = 11) 
+
+
+
+
+```
+    </div>
+  </div>
+</div>
+
+---
+
+<br />
+<br />
+<br />
+<br />
+<br />
+<br />
+
+
+```{r echo=FALSE, warning=FALSE}
+knitr::kable(head(produtos_import),
+             format = 'html',
+             format.args = list(big.mark = ".", decimal.mark = ","),
+             align = "c",
+             col.names = c("Produto",
+                           "Valor importado em Agosto/21 (US$)",
+                           "Variação (12 meses)",
+                           "Variação mensal"),
+             caption = "Produtos mais importados no mês (Referência: Agosto/2021)") %>% 
+               kable_styling(font_size = 11) 
+
+```
+
+
+---
+background-image: url("parte4.png")
+background-position: center
+background-size: contain
+
+
+---
+
+
+<br />
+
+<br />
+
+#### Fluxo de passageiros da aviação civil
+
+
+<div class="container">
+  <div class="row">
+    <div class="col">
+```{r,echo=FALSE, warning=FALSE}
+
+
+ggplot(data=dados_tipo_voo)+
+  geom_line(filter(dados_tipo_voo,  tipo_voo == "Brasil para o exterior"|  tipo_voo == "Exterior para o Brasil"),
+            mapping=aes(x=date, y=total_passageiros, colour=tipo_voo), size = 1)+
+  labs(title = "Fluxo de passageiros aéreos Brasil/Exterior",
+       caption = "Fonte: ANAC | Elaboração: Arazul Research",
+       y = "Total de passageiros",
+       x = '') +
+  scale_color_manual(values=c("#008BBC", "dodgerblue4"), name="")+
+  scale_x_date(date_labels = "%b\n%Y", breaks = "2 month") +
+  theme_minimal() +
+  theme(legend.position = "bottom",
+        axis.title.y = element_text(size=8),
+        plot.title = element_text(size=12, hjust = 0.5, face="bold"),
+        plot.caption = element_text(size = 2),
+        axis.text.y = element_text(face="bold", color="#000000",size=8),
+        axis.text.x = element_text(face="bold", color="#000000",size=8)) +
+  theme_xaringan(text_font_size = 10)
+
+
+```
+    </div>
+    <div class="col">
+```{r echo=FALSE}
+knitr::kable(head(tabela_aviacao),
+             format = 'html',
+             align = "c",
+             col.names = c("Período", "Variação (saídas)", "Variação (chegadas)"),
+             caption = "Referência: Agosto/2021")
+```
+    </div>
+  </div>
+</div>
+
+
+---
+background-image: url("final.png")
+background-position: center
+background-size: contain
+
+
+
+
+
+
+
+
+
+
